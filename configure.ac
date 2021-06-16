@@ -94,9 +94,11 @@ AC_PATH_PROG(DIFF, diff, diff)
 #CPPFLAGS="$CPPFLAGS -DMYSQL_DYNAMIC_PLUGIN -DMYSQL_SERVER"
 
 #we can add the following flags for better error catching: -Werror -Wimplicit
-CPPFLAGS="$CPPFLAGS -Werror -Wall"
+#removed -Werror because MySQL 5.7.31 uses auto_ptr which issues warnings in C++17
+CPPFLAGS="$CPPFLAGS -Wall"
 CFLAGS="$CFLAGS -Wimplicit"
-CXXFLAGS="-fno-implicit-templates -fno-strict-aliasing"
+#removed -fno-implicit-templates because it was causing compile errors with std::vector in the plugin.
+CXXFLAGS="-fno-strict-aliasing"
 
 #add pthread libs
 LIBS="$LIBS -lpthread"
