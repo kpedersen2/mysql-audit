@@ -1,0 +1,81 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# http://www.gnu.org/software/automake
+Makefile.in
+
+# http://www.gnu.org/software/autoconf
+autom4te.cache
+/aclocal.m4
+**/config.h
+**/config.log
+**/config.status
+/configure
+**/stamp-h1
+**/libtool
+
+# https://www.gnu.org/software/libtool/
+**/config-aux
+
+# Generated Makefile
+# (meta build system like autotools,
+# can automatically generate from config.status script
+# (which is called by configure script))
+Makefile
+
+# PCRE
+pcre/pcre.h
+pcre/pcre-config
+pcre/libpcre.pc
+pcre/libpcre16.pc
+pcre/libpcre32.pc
+pcre/libpcreposix.pc
+pcre/libpcrecpp.pc
+pcre/pcrecpparg.h
+pcre/pcre_stringpiece.h
+
+# Udis86
+udis86/libudis86/itab.c
+udis86/libudis86/itab.h
+
+# MySQL
+mysql-*/*
+
+# VS Code
+.deps/
+.vscode/
+
+# Output directory
+.libs
+
+include/_config.h*
