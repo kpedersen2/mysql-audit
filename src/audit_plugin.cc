@@ -93,6 +93,9 @@ enum before_after_enum {
 
 static ulong before_after_mode = AUDIT_AFTER;
 
+static ulong json_file_handler_policy = Audit_file_handler::FILE_HANDLE_POLICY_SERIAL;
+static my_bool json_file_handler_full_durability_mode = false;
+
 // regex stuff
 static char password_masking_regex_check_buff[4096] = {0};
 static char * password_masking_regex_string = NULL;
@@ -2294,6 +2297,7 @@ static int audit_plugin_deinit(void *p)
 	DBUG_ENTER("audit_plugin_deinit");
 	sql_print_information("%s deinit", log_prefix);
 	remove_hot_functions();
+	Audit_handler::stop_all();
 	DBUG_RETURN(0);
 }
 
@@ -2351,6 +2355,35 @@ static void json_log_socket_enable(THD *thd, SYS_VAR *var,
 	if (json_socket_handler.is_init())
 	{
 		json_socket_handler.set_enable(json_socket_handler_enable);
+	}
+}
+
+static void json_log_file_full_durability_mode(THD *thd, SYS_VAR *var,
+		void *tgt, const void *save)
+{
+	json_file_handler_full_durability_mode = *reinterpret_cast<const uint*>(save);
+	if (json_file_handler.is_init())
+	{
+		json_file_handler.set_full_durability_mode(json_file_handler_full_durability_mode);
+	}
+}
+
+static const char* policy_names[] =
+{
+	"serial", "threaded", NullS
+};
+
+static void json_log_file_policy(THD *thd, SYS_VAR *var,
+		void *tgt, const void *save)
+{
+	ulong save_copy = *(ulong*)save;
+	if (save_copy != json_file_handler_policy) {
+		sql_print_information("Changing file policy to '%s'", policy_names[save_copy]);
+		json_file_handler_policy = save_copy;
+		json_file_handler.set_log_file_policy(json_file_handler_policy);
+	}
+	else {
+		sql_print_information("File policy is already set to '%s'", policy_names[json_file_handler_policy]);
 	}
 }
 
@@ -2515,6 +2548,29 @@ static MYSQL_SYSVAR_ENUM(before_after, before_after_mode,
 	NULL, NULL, 0,
 	& before_after_typelib);
 
+static TYPELIB file_policy_t = {
+	array_elements(policy_names) - 1,
+	"file_policy_t",
+	policy_names,
+	nullptr
+};
+
+static MYSQL_SYSVAR_ENUM(json_file_policy, json_file_handler_policy,
+		PLUGIN_VAR_RQCMDARG,
+		"AUDIT plugin json file policy. Policy on how to handle audit messages."
+		"Possible values are:"
+		" SERIAL (default) Audit messages are logged one at a time in order, THREADED Multiple threads can log audit messages concurrently",
+		nullptr,
+		json_log_file_policy,
+		Audit_file_handler::FILE_HANDLE_POLICY_SERIAL, &file_policy_t );
+
+static MYSQL_SYSVAR_BOOL(json_file_full_durability_mode, json_file_handler_full_durability_mode,
+		PLUGIN_VAR_RQCMDARG,
+		"AUDIT plugin json log file full durability mode. Set to ON to enable full durability mode.",
+		nullptr, // check function
+		json_log_file_full_durability_mode, // update function
+		false);   // default
+
 /*
  * Plugin system vars
  */
@@ -2557,6 +2613,8 @@ static SYS_VAR* audit_system_variables[] =
 	MYSQL_SYSVAR(peer_info),
 	MYSQL_SYSVAR(before_after),
 	MYSQL_SYSVAR(json_socket_write_timeout),
+	MYSQL_SYSVAR(json_file_full_durability_mode),
+	MYSQL_SYSVAR(json_file_policy),
 
 	NULL
 };
@@ -2679,4 +2737,4 @@ extern "C" int __cxa_pure_virtual (void)
 /*
  * Variable to hold version
  */
-MYSQL_AUDIT_PLUGIN_SYMBOL_VERSION() = '\0';
+//MYSQL_AUDIT_PLUGIN_SYMBOL_VERSION() = '\0';

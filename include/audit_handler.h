@@ -8,6 +8,7 @@
 #ifndef AUDIT_HANDLER_H_
 #define AUDIT_HANDLER_H_
 
+#include "audit_log_buffer.h"
 #include "mysql_inc.h"
 #include <yajl/yajl_gen.h>
 
@@ -874,7 +875,7 @@ public:
 	 */
 	char *m_io_dest;
 	
-	inline ssize_t write(const char *data, size_t size) 
+	inline ssize_t write(const char *data, size_t size) override
 	{
 		pthread_mutex_lock(&LOCK_io);
 		ssize_t res = write_no_lock(data, size);
@@ -895,6 +896,9 @@ protected:
 
 class Audit_file_handler: public Audit_io_handler {
 public:
+	enum FileHandlePolicy { FILE_HANDLE_POLICY_SERIAL = 0,
+							FILE_HANDLE_POLICY_THREADED
+	};
 
 	Audit_file_handler() :
 		m_sync_period(0)
@@ -928,10 +932,30 @@ public:
 	 */
 	ssize_t write_no_lock(const char *data, size_t size);
 
+	ssize_t write(const char *data, size_t size) override {
+		ssize_t res = -1;
+		if (m_file_handle_policy == FileHandlePolicy::FILE_HANDLE_POLICY_THREADED) {
+			res = m_log_manager.write(data, size);
+		}
+		else if (m_file_handle_policy == FileHandlePolicy::FILE_HANDLE_POLICY_SERIAL) {
+			res = Audit_io_handler::write(data, size);
+		}
+		return res;
+	}
+
 	void close();
 
 	int open(const char *io_dest, bool m_log_errors);
 	// static void print_sleep(THD *thd, int delay_ms);
+
+	void set_full_durability_mode(bool mode);
+
+	void set_log_file_policy(ulong file_policy);
+
+	void start_fsync_thread();
+
+	void stop_fsync_thread();
+
 protected:
 	// override default assignment and copy to protect against creating
 	// additional instances
@@ -941,6 +965,10 @@ protected:
 	FILE *m_log_file;
 	// the period to use for syncing
 	unsigned int m_sync_counter;
+
+	LogManager m_log_manager;
+
+	FileHandlePolicy m_file_handle_policy{ FILE_HANDLE_POLICY_SERIAL };
 };
 
 class Audit_socket_handler: public Audit_io_handler {

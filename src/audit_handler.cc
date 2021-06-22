@@ -344,6 +344,8 @@ int Audit_file_handler::open(const char *io_dest, bool log_errors)
 		return -1;
 	}
 
+	m_log_manager.set_file(m_log_file);
+
 	ssize_t bufsize = BUFSIZ;
 	int res = 0;
 	// 0 -> use default, 1 or negative -> disabled
@@ -372,6 +374,37 @@ int Audit_file_handler::open(const char *io_dest, bool log_errors)
 	sql_print_information("%s bufsize for file [%s]: %zd. Value of json_file_bufsize: %ld.", AUDIT_LOG_PREFIX, m_io_dest,
 			__fbufsize(m_log_file), m_bufsize);
 	return 0;
+}
+
+void Audit_file_handler::set_full_durability_mode(bool mode) {
+	m_log_manager.set_full_durability_mode(mode);
+}
+
+void Audit_file_handler::set_log_file_policy(ulong file_policy)
+{
+	m_file_handle_policy = static_cast<FileHandlePolicy>(file_policy);
+	switch (m_file_handle_policy) {
+	case Audit_file_handler::FILE_HANDLE_POLICY_SERIAL:
+		// Stop fsync thread if started.
+		stop_fsync_thread();
+		break;
+	case Audit_file_handler::FILE_HANDLE_POLICY_THREADED:
+		// Start the fsync thread if stopped.
+		start_fsync_thread();
+		break;
+	}
+}
+
+void Audit_file_handler::start_fsync_thread()
+{
+	sql_print_information("%s Starting fsync thread", AUDIT_LOG_PREFIX);
+	m_log_manager.start_fsync_thread();
+}
+
+void Audit_file_handler::stop_fsync_thread()
+{
+	sql_print_information("%s Stopping fsync thread", AUDIT_LOG_PREFIX);
+	m_log_manager.stop_fsync_thread();
 }
 
 // no locks. called by handler_start and when it is time to retry
