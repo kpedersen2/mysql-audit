@@ -18,7 +18,7 @@
 #include <atomic>
 
 class LogBuffer {
-private:
+public:
 	using value_type = char;
 	using container_type = std::vector< value_type >;
 	using size_type = container_type::size_type;
@@ -26,8 +26,14 @@ private:
 	using const_iterator = container_type::const_iterator;
 
 public:
+	LogBuffer() = default;
+
 	LogBuffer(size_type size) {
 		m_buffer.reserve( size );
+	}
+
+	int num_messages() const {
+		return m_num_messages;
 	}
 
 	bool chk_buffer(size_type size) const {
@@ -35,6 +41,7 @@ public:
 	}
 
 	iterator insert(const char* data, size_type size) {
+		m_num_messages++;
 		return m_buffer.insert( m_buffer.end(), data, data + size );
 	}
 
@@ -67,7 +74,16 @@ public:
 	}
 
 	void clear() noexcept {
+		m_num_messages = 0;
 		m_buffer.clear();
+	}
+
+	void reserve(size_type size) {
+		m_buffer.reserve(size);
+	}
+
+	size_type capacity() const {
+		return m_buffer.capacity();
 	}
 
 	size_type write_size() const noexcept {
@@ -82,10 +98,16 @@ private:
 	container_type m_buffer;
 
 	iterator m_last_write_pos = m_buffer.begin();
+
+	int m_num_messages = 0;
 };
 
 class LogManager {
 public:
+	LogManager() = default;
+
+	LogManager(LogBuffer::size_type buffer_size);
+
 	~LogManager();
 
 	void set_file(FILE *file);
@@ -96,6 +118,8 @@ public:
 
     void fsync_monitor();
 
+	LogBuffer::size_type log_buffer_capacity() const;
+
     bool is_full_durability_mode() const;
 
 	void set_full_durability_mode(bool mode);
@@ -104,14 +128,16 @@ public:
 
 	void stop_fsync_thread();
 
+	void set_buffer_size(LogBuffer::size_type size);
+
 private:
     FILE *m_log_file;
 
-	LogBuffer m_buffer1{ 10000 };
-	LogBuffer m_buffer2{ 10000 };
+	LogBuffer m_buffer1;
+	LogBuffer m_buffer2;
 
-	LogBuffer* m_write_buffer = &m_buffer1;
-	LogBuffer* m_read_buffer = &m_buffer2;
+	LogBuffer* m_outgoing_buffer = &m_buffer1;
+	LogBuffer* m_incoming_buffer = &m_buffer2;
 	LogBuffer* m_last_buffer_wrote_to = &m_buffer1;
 
 	std::thread m_fsync_thread;
@@ -124,8 +150,8 @@ private:
 	std::atomic_bool m_fsync_success{ false };
 	bool buffer_ready = false;
 
-	std::chrono::time_point<std::chrono::steady_clock> m_next_group_fsync = std::chrono::steady_clock::now();
-	std::chrono::duration<uint, std::milli> m_group_fsync_period{};
+	std::chrono::steady_clock::time_point m_next_group_fsync = std::chrono::steady_clock::now();
+	std::chrono::milliseconds m_group_fsync_period{ 10 };
 
     bool m_full_durability_mode = false;
 };

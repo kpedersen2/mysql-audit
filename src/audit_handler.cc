@@ -361,8 +361,10 @@ int Audit_file_handler::open(const char *io_dest, bool log_errors)
 	}
 	else
 	{
-		res = setvbuf(m_log_file, NULL, _IOFBF, bufsize);
-
+		m_buf = std::make_unique<char[]>(bufsize);
+		res = setvbuf(m_log_file, m_buf.get(), _IOFBF, bufsize);
+		set_log_buffer_size(bufsize);
+		sql_print_information("Size of log buffer %ld", m_log_manager.log_buffer_capacity());
 	}
 
 	if (res)
@@ -405,6 +407,11 @@ void Audit_file_handler::stop_fsync_thread()
 {
 	sql_print_information("%s Stopping fsync thread", AUDIT_LOG_PREFIX);
 	m_log_manager.stop_fsync_thread();
+}
+
+void Audit_file_handler::set_log_buffer_size(size_t size)
+{
+	m_log_manager.set_buffer_size(size);
 }
 
 // no locks. called by handler_start and when it is time to retry
@@ -1194,7 +1201,9 @@ ssize_t Audit_json_formatter::event_format(ThdSesData *pThdData, IWriter *writer
 		size_t len = 0;
 		yajl_gen_get_buf(gen, &text, &len);
 		// print the json
+		sql_print_information("%s Thread %ld ready to write", AUDIT_LOG_PREFIX, thdid);
 		res = writer->write((const char *)text, len);		
+		sql_print_information("%s Thread %ld finished writing", AUDIT_LOG_PREFIX, thdid);
 	}
 	yajl_gen_free(gen); // free the generator
 	return res;

@@ -1,5 +1,11 @@
 #include "audit_log_buffer.h"
 
+LogManager::LogManager(LogBuffer::size_type buffer_size) :
+	m_buffer1{ buffer_size },
+	m_buffer2{ buffer_size }
+{
+}
+
 LogManager::~LogManager()
 {
 	stop_fsync_thread();
@@ -15,34 +21,43 @@ ssize_t LogManager::write(const char* data, size_t size)
 	ssize_t res = -1;
 	if(m_log_file)
 	{
-		sql_print_information("audit plugin: Writing %zu bytes to buffer thread.", size);
+		sql_print_information("audit plugin: writing %zu bytes to buffer thread.", size);
 
 		while (true) {
-			std::unique_lock<std::mutex> lck{m_buffer_mutex};
+			std::unique_lock lck{m_buffer_mutex};
 
-			if (m_read_buffer->chk_buffer(size)) {
+			if (m_incoming_buffer->chk_buffer(size)) {
 				sql_print_information("audit plugin: can add to buffer");
-				m_read_buffer->insert(data, size);
-				sql_print_information("audit plugin: write buffer size: %lu, Read buffer size: %lu", m_write_buffer->size(), m_read_buffer->size());
+				m_incoming_buffer->insert(data, size);
+				sql_print_information("audit plugin: outgoing buffer size: %lu, incoming buffer size: %lu", m_outgoing_buffer->size(), m_incoming_buffer->size());
 			}
 			else {
 				sql_print_information("audit plugin: buffer is full, signal writer thread and wait until empty");
-				// Wait until buffer ready. Wait will unlock mutex.
+
 				buffer_ready = false;
+				// Signal the writer thread that there is a client waiting to write to the buffer.
 				m_writer_signal.notify_one();
 
+				// Now wait until the log buffer is ready to write to.
 				m_writer_signal.wait(lck, [this]{ return buffer_ready; } );
 
 				continue;
 			}
 
 			if (is_full_durability_mode()) {
-				// Store buffer pointer
-				m_last_buffer_wrote_to = m_read_buffer;
+				// In full durability mode we wait until the log message was
+				// successfully written to disk before proceeding.
+				m_last_buffer_wrote_to = m_incoming_buffer;
 
 				sql_print_information("audit plugin: waiting until fsync is successful");
-				m_fsync_signal.wait(lck);
-				sql_print_information("audit plugin: fsync finished");
+				m_fsync_signal.wait(lck); // TODO: Timeout here?
+				if (m_fsync_success) {
+					m_fsync_success = false;
+					sql_print_information("audit plugin: fsync succeeded");
+				}
+				else {
+					sql_print_error("audit plugin: fsync failed");
+				}
 			}
 			res = 1;
 			break;
@@ -56,8 +71,7 @@ ssize_t LogManager::write(const char* data, size_t size)
 
 ssize_t LogManager::write_to_disk()
 {
-	std::string log{ (char*)m_write_buffer->write_start(), m_write_buffer->size() };
-	ssize_t res = my_fwrite(m_log_file, m_write_buffer->write_start(), m_write_buffer->size(), MYF(0));
+	ssize_t res = my_fwrite(m_log_file, m_outgoing_buffer->write_start(), m_outgoing_buffer->size(), MYF(0));
 	if ( res ) {
 		res = (fflush(m_log_file) == 0);
 		if (res)
@@ -86,11 +100,11 @@ void LogManager::fsync_monitor()
 			break;
 		}
 
-		std::unique_lock<std::mutex> lck{m_buffer_mutex};
+		std::unique_lock lck{m_buffer_mutex};
 		if (is_full_durability_mode()) {
 			// Wait until the next fsync timeout
 			if (std::cv_status::timeout == m_writer_signal.wait_until(lck, m_next_group_fsync)) {
-				sql_print_information("fsync monitor: write thread woken up on timeout");
+				//sql_print_information("fsync monitor: write thread woken up on timeout");
 			}
 			else {
 				sql_print_information("fsync monitor: write thread woken up by client thread, buffer must be full");
@@ -107,36 +121,38 @@ void LogManager::fsync_monitor()
 			}
 		}
 
-		if (m_read_buffer->size() > 0)
+		if (m_incoming_buffer->size() > 0)
 		{
 			sql_print_information("fsync monitor: switching buffer pointers");
 			// When waking there is something to write. Switch the pointers then unlock.
-			if (m_write_buffer == &m_buffer1) {
-				m_write_buffer = &m_buffer2;
-				m_read_buffer = &m_buffer1;
+			if (m_outgoing_buffer == &m_buffer1) {
+				m_outgoing_buffer = &m_buffer2;
+				m_incoming_buffer = &m_buffer1;
 			}
 			else {
-				m_write_buffer = &m_buffer1;
-				m_read_buffer = &m_buffer2;
+				m_outgoing_buffer = &m_buffer1;
+				m_incoming_buffer = &m_buffer2;
 			}
 			buffer_ready = true;
 			lck.unlock();
 
 			sql_print_information("fsync monitor: signal waiting threads that buffers are ready");
-			m_writer_signal.notify_one();
+			m_writer_signal.notify_all();
 
 			auto ret = write_to_disk();
 			if (ret > 0) {
-				m_next_group_fsync = std::chrono::steady_clock::now() + m_group_fsync_period;
+				m_fsync_success = true;
 
 				// Success update pointers
 				sql_print_information("fsync monitor: successful write_to_disk");
 				if (is_full_durability_mode()) {
-					sql_print_information("fsync monitor: signal waiting threads that fsync was successful");
+					m_next_group_fsync = std::chrono::steady_clock::now() + m_group_fsync_period;
+	
+					sql_print_information("fsync monitor: signal waiting threads that fsync was successful, wrote %d log messages", m_outgoing_buffer->num_messages());
 					m_fsync_signal.notify_all();
 				}
-				m_write_buffer->clear();
-				sql_print_information("fsync monitor: Write buffer size: %lu, Read buffer size: %lu", m_write_buffer->size(), m_read_buffer->size());
+				m_outgoing_buffer->clear();
+				sql_print_information("fsync monitor: outgoing buffer size: %lu, incoming buffer size: %lu", m_outgoing_buffer->size(), m_incoming_buffer->size());
 			}
 			else {
 				// Error, try again?				
@@ -145,12 +161,22 @@ void LogManager::fsync_monitor()
 	}
 }
 
+LogBuffer::size_type LogManager::log_buffer_capacity() const
+{
+	return m_buffer1.capacity();
+}
+
 bool LogManager::is_full_durability_mode() const
 {
     return m_full_durability_mode;
 }
 
 void LogManager::set_full_durability_mode(bool mode) {
+	if (mode && m_full_durability_mode != mode) {
+		// Initialize fsync timeout
+		m_next_group_fsync = std::chrono::steady_clock::now();
+	}
+
 	m_full_durability_mode = mode;
 }
 
@@ -165,4 +191,10 @@ void LogManager::stop_fsync_thread()
 	if (m_fsync_thread.joinable()) {
 		m_fsync_thread.join();
 	}
+}
+
+void LogManager::set_buffer_size(LogBuffer::size_type size)
+{
+	m_buffer1.reserve(size);
+	m_buffer2.reserve(size);
 }

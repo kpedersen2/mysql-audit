@@ -905,6 +905,7 @@ public:
 		, m_bufsize(0)
 		, m_log_file(NULL)
 		, m_sync_counter(0)
+		, m_log_manager{}
 	{
 		m_io_type = "file";
 	}
@@ -956,11 +957,13 @@ public:
 
 	void stop_fsync_thread();
 
+	void set_log_buffer_size(size_t size);
+
 protected:
 	// override default assignment and copy to protect against creating
 	// additional instances
 	Audit_file_handler & operator=(const Audit_file_handler&);
-	Audit_file_handler(const Audit_file_handler&);
+	Audit_file_handler(const Audit_file_handler&); 
 	
 	FILE *m_log_file;
 	// the period to use for syncing
@@ -969,6 +972,8 @@ protected:
 	LogManager m_log_manager;
 
 	FileHandlePolicy m_file_handle_policy{ FILE_HANDLE_POLICY_SERIAL };
+
+	std::unique_ptr<char[]> m_buf;
 };
 
 class Audit_socket_handler: public Audit_io_handler {
